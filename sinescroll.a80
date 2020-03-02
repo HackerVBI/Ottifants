@@ -1,0 +1,433 @@
+;--------------------------------------------------------------
+;                         STRETCH SINUS SCROLL
+;                               by dr.Max
+;                              13-Jul-2018
+;--------------------------------------------------------------
+
+SCROLL_SYMBOLS	EQU	14
+;--------------------------------------------------------------
+SCROLL_SPEED	EQU	1
+
+SCROLL_YOFFSET	EQU	160
+
+SCROLL_AMPL_Y	EQU	32
+SCROLL_AMPL_X	EQU	16
+
+;Y
+SCROLL_CNTX_DS	EQU	0
+SCROLL_ADD0	EQU	4
+SCROLL_ADD1	EQU	9
+
+;X
+SCROLL_CNTXX_DS	EQU	70
+SCROLL_ADDX0	EQU	-3
+SCROLL_ADDX1	EQU	-17
+;--------------------------------------------------------------
+
+;--------------------------------------------------------------
+
+;--------------------------------------------------------------
+scroll_pal
+	DB	0
+scroll_speed
+	DB	SCROLL_SPEED
+scroll_speed_set
+	DB	SCROLL_SPEED
+scroll_speed_cnt
+	DB	0
+scroll_cnt
+	DB	SCROLL_SPEED
+scroll_cntX
+	DB	SCROLL_CNTX_DS
+scroll_cntXX
+	DB	SCROLL_CNTXX_DS
+scroll_xoffs
+	DW	SCROLL_SPEED
+text_addr
+	DW	text
+
+scroll:	ld	a,(scroll_speed)
+	ld	b,a
+	ld	a,(scroll_cnt)
+	sub	b
+	jr	nc,.skip
+;store remainder
+	push	af
+
+	ld	hl,(text_addr)
+.next	ld	a,(hl)
+	or	a
+	jr	nz,$+2+3
+	ld	hl,text
+	ld	a,(hl)
+	inc	hl
+	sub	#90
+	jr	c,1F
+	ld	(scroll_pal),a
+	jr	.next
+1	add	a,#10
+	jr	nc,2F
+	ld	(scroll_speed_set),a
+	jr	.next
+2	add	a,#60
+	ld	(text_addr),hl
+
+	ld	e,a
+
+;calc tile number
+	ld	c,a
+	and	#0F
+	add	a,a
+	add	a,a
+	ld	l,a
+	ld	a,c
+	rrca
+	rrca
+	rrca
+	rrca
+	and	#3
+	ld	h,a
+
+	ld	a,(scroll_pal)
+	rlca
+	rlca
+	rlca
+	rlca
+	and	#F0
+	or	h
+
+;set tile number
+	ld	ix,scroll_sprites+(SCROLL_SYMBOLS*6)
+	ld	(ix+4),l
+;	add #10
+	ld	(ix+5),a
+
+	ld	a,e
+	cp	#0F
+	ld	d,3
+	jr	nz,$+2+2
+	ld	d,7
+	ld	a,d
+	call	set_sprite_size
+
+;scroll sprite descriptors
+	ld	hl,scroll_sprites+6
+	ld	de,scroll_sprites
+	ld	bc,(SCROLL_SYMBOLS+1)*6
+	ldir
+
+	ld	a,(scroll_cntX)
+	add	a,SCROLL_ADD1
+	ld	(scroll_cntX),a
+
+	ld	a,(scroll_cntXX)
+	add	a,SCROLL_ADDX1
+	ld	(scroll_cntXX),a
+
+;restore remainder
+	pop	af
+	add	a,32
+.skip	ld	(scroll_cnt),a
+	sub	64
+	ld	(scroll_xoffs),a
+	ld	a,0
+	sbc	a,a
+	ld	(scroll_xoffs+1),a
+
+;change speed
+	ld	hl,scroll_speed_cnt
+	dec	(hl)
+	jp	p,.skipspeed
+	ld	(hl),1
+	dec	hl
+	ld	a,(hl)
+	dec	hl
+	cp	(hl)
+	jr	z,.skipspeed
+	ld	c,-1
+	jr	c,$+2+2
+	ld	c,1
+	ld	a,(hl)
+	add	a,c
+	ld	(hl),a
+.skipspeed
+
+	exx
+	ld	h,high sin_scrollY
+	ld	a,(scroll_cntX)
+	add	a,SCROLL_ADD0
+	ld	(scroll_cntX),a
+	ld	l,a
+
+	ld	hy,high sin_scrollX
+	ld	a,(scroll_cntXX)
+	add	a,SCROLL_ADDX0
+	ld	(scroll_cntXX),a
+	ld	ly,a
+
+	ld	bc,(scroll_xoffs)
+	exx
+
+	ld	ix,scroll_sprites
+
+;create empty sprite descriptor
+	ld	de,0
+	ld	bc,0
+	call	set_sprite_coord
+	set	6,(ix+1)	;next layer
+	res	5,(ix+1)	;off
+
+	ld	de,6
+	add	ix,de
+
+	ld	b,SCROLL_SYMBOLS
+.loop	exx
+	ld	a,l
+	add	a,SCROLL_ADD1
+	ld	l,a
+	ld	a,(hl)	;y
+	add	a,(iy)
+	ld	e,a
+	ld	d,0
+
+	ld	a,ly
+	add	a,SCROLL_ADDX1
+	ld	ly,a
+
+;\for Ysize 64
+	push	hl
+	ld	hl,SCROLL_YOFFSET
+	ld	a,(ix+1)
+	and	#0E
+	cp	#0E
+	jr	nz,$+2+3
+	ld	hl,SCROLL_YOFFSET-32
+	add	hl,de
+	ex	de,hl
+	pop	hl
+;/
+	push	bc
+	ld	a,(iy)
+	add	a,c
+	ld	c,a
+	ld	a,b
+	adc	a,0
+	ld	b,a	;x
+	call	set_sprite_coord
+	pop	bc
+	ld	a,c
+	add	a,32
+	ld	c,a
+	ld	a,b
+	adc	a,0
+	ld	b,a	;x
+
+	exx
+	add	ix,de
+	djnz	.loop
+	ret
+
+;BC - Xcoord
+;DE - Ycoord
+set_sprite_coord:
+	ld	(ix+0),e	;Y
+	ld	a,d
+	and	1
+	or	(1<<5)
+	or	(ix+1)
+	ld	(ix+1),a
+	ld	(ix+2),c	;X
+	ld	a,b
+	and	1
+	or	(3<<1)
+	ld	(ix+3),a
+
+	ret
+
+;A - Ysize
+set_sprite_size:
+	rlca
+	ld	c,a
+	ld	a,(ix+1)
+	and	#F1
+	or	c
+	ld	(ix+1),a
+	ret
+;--------------------------------------------------------------
+	MODULE	INDICATOR
+draw:	ld	a,Sprite_page
+	ld	bc,PAGE1
+	out	(c),a
+
+	ld	hl,#4000+(31*256)
+	ld	de,#4000+(16*3)+(31*256)+0
+	ld	a,32
+	call	copy
+	ld	hl,#4000+(31*256)
+	ld	de,#4000+(16*3)+(31*256)+5
+	ld	a,32
+	call	copy
+	ld	hl,#4000+(31*256)
+	ld	de,#4000+(16*3)+(31*256)+10
+	ld	a,32
+	call	copy
+
+	ld	a,8
+	call	AY.getreg
+	ld	de,#4000+(16*3)+(31*256)+0
+	call	column
+
+	ld	a,9
+	call	AY.getreg
+	ld	de,#4000+(16*3)+(31*256)+5
+	call	column
+
+	ld	a,10
+	call	AY.getreg
+	ld	de,#4000+(16*3)+(31*256)+10
+
+column:	ld	hl,#4000+(16*4)-256
+	bit	4,a
+	jr	z,$+2+3+2
+	ld	hl,#4005+(16*4)-256
+	ld	a,#0F
+	and	#0F
+	add	a,a
+	ret	z
+	ld	b,a
+	add	a,h
+	ld	h,a
+	ld	a,b
+copy:	push	hl,de
+	ldi:ldi:ldi:ldi
+	pop	de,hl
+	dec	h
+	dec	d
+	dec	a
+	jp	nz,copy
+	ret
+	ENDMODULE
+;--------------------------------------------------------------
+	MODULE	AY
+;A - reg
+getreg:	ld	bc,#FFFD
+	out	(c),a
+	in	a,(c)
+	ret
+	ENDMODULE
+;--------------------------------------------------------------
+;HL - addr
+;BC - ampl
+SineGen:
+	ld	de,0
+.loop	ld	a,e
+	push	bc,de,hl
+	call	sinX
+	ld	a,e
+	pop	hl,de,bc
+	ld	(hl),a
+	inc	hl
+	inc	e
+	jr	nz,.loop
+	ret
+
+;A - X
+;BC - R
+sinX:	ld	l,a
+	ld	h,0
+	add	hl,hl
+	ld	de,SINETBL
+	add	hl,de
+	ld	e,(hl)
+	inc	hl
+	ld	d,(hl)
+	ld	hl,32767
+	add	hl,de
+	ex	de,hl
+;	call	mul16
+;	ret
+
+;---------------
+;DEHL = DE * BC
+;---------------
+mul16:	ld	hl,0
+	sla	e
+	rl	d
+	jr	nc,1F
+	ld	h,b
+	ld	l,c
+1	ld	a,15
+.loop	add	hl,hl
+	rl	e
+	rl	d
+	jr	nc,2F
+	add	hl,bc
+	jr	nc,2F
+	inc	de
+2	dec	a
+	jr	nz,.loop
+	ret
+;--------------------------------------------------------------
+
+dma_scroll
+	DB	high DMASADDRL, low scroll_sprites
+	DB	high DMASADDRH, high scroll_sprites
+	DB	high DMASADDRX, Main_emu_page
+	DB	high DMADADDRL, 0
+	DB	high DMADADDRH, 0
+	DB	high DMADADDRX, 2
+	DB	high DMANUM, (SCROLL_SYMBOLS+1)*3
+	DB	high DMALEN, 0
+	DB 	high DMACTR, DMA_RAM_SFILE
+	DB	#FF
+
+;--------------------------------------------------------------
+	ALIGN	2
+scroll_sprites
+	DS	(SCROLL_SYMBOLS+2)*6
+;--------------------------------------------------------------
+;#80-#8F - speed
+;#90-#9F - palette
+;#2F - Bruno (palette 6)
+;"#" - indicator
+
+text	DB	#91,#83,"#",#90," HELLO "
+	DB	#91
+	DB	"DUDES! ",#81,#93,"#"
+;	DB	#96,#2F," ",#90		;set palette 6 and set "Bruno"
+	DB	"   ",#83
+	DB	"    ENHANCERS PRESENT ",#90,"TO YOU",#93," NEW PORT FROM ",#92,"SEGA MASTER SYSTEM: "
+	DB	#96,#2F," ",#93,#82
+	DB	" OTTIFANTS ",#96,#2F," ",#90
+	DB	#83, " PRESS ",#82,"SPACE TO START ORIGINAL GAME, ",#83,#93," OR    "
+	DB	" PRESS ",#90,"0, ZERO",#93," TO START GAME WITH NEW MUSIC BY   "
+	DB	#90,"GOGIN, ",#91,"QUIET,",#92," EA, ",#93,"NIK-O, ",#91,"FATALSNIPE, ",#90," MR287CC!    "
+	DB	#87,#90
+	DB	"    STRETCH SCROLL",#81
+	DB	#84," BY ", #93, "DR.MAX ",#81,"  "
+	DB	#85,#92
+	DB	"MUSIC BY "
+	DB	#90,"#",#92," NIK-O ",#93,"#",#92,#81
+	DB	"   ",#84,#92
+	DB	"INTRO BY VBI ",#91,"#",#92,#83
+	DB	"    ",#85
+	DB	"   PRESS 1-4 TO SELECT STAGE ",#81,"  "
+
+	
+	
+	DB	"   :-)    "
+	DB	#81,"       "
+	DB	#93,"# # # # # # # #"
+	DB	0
+;--------------------------------------------------------------
+
+SINETBL	INCLUDE "SineScroll/include/sinetbl.a80"
+
+	align 256
+sin_scrollY	ds 256
+sin_scrollX	ds 256
+
+;--------------------------------------------------------------
+	DISPLAY "Text:", text
+
+;--------------------------------------------------------------

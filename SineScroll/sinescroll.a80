@@ -1,0 +1,583 @@
+;--------------------------------------------------------------
+;                         STRETCH SINUS SCROLL
+;                               by dr.Max
+;                              13-Jul-2018
+;--------------------------------------------------------------
+	DEVICE ZXSPECTRUM128
+;--------------------------------------------------------------
+	INCLUDE	"include/tsconfig.a80"
+;--------------------------------------------------------------
+_RESOLUTION = 320			;MB 320 | 360 | 256
+;--------------------------------------------------------------
+GFX_PG		EQU	#20		;GRAPHICS PAGE
+SPR_PG		EQU	#E0		;SPRITE PAGE (FONT)
+TILE_PG		EQU	#C0		;TILEMAP PAGE
+TILE00_SPRPG	EQU	#40		;TILE GFX PAGE
+;--------------------------------------------------------------
+	IF _RESOLUTION = 320
+SCROLL_SYMBOLS	EQU	13
+	ELSE
+	IF _RESOLUTION = 360
+SCROLL_SYMBOLS	EQU	14
+	ELSE
+SCROLL_SYMBOLS	EQU	12
+	ENDIF
+	ENDIF
+;--------------------------------------------------------------
+SCROLL_SPEED	EQU	1
+
+SCROLL_YOFFSET	EQU	160
+
+SCROLL_AMPL_Y	EQU	32
+SCROLL_AMPL_X	EQU	16
+
+;Y
+SCROLL_CNTX_DS	EQU	0
+SCROLL_ADD0	EQU	4
+SCROLL_ADD1	EQU	9
+
+;X
+SCROLL_CNTXX_DS	EQU	70
+SCROLL_ADDX0	EQU	-3
+SCROLL_ADDX1	EQU	-17
+;--------------------------------------------------------------
+sin_scrollY	EQU	#6000
+sin_scrollX	EQU	#6100
+;--------------------------------------------------------------
+	org	#8000
+start	di
+	ld	sp,start
+	ld	a,SYS_ZCLK14 | SYS_CACHEEN
+	ld	bc,SYSCONFIG
+	out	(c),a
+
+	IF _RESOLUTION = 320
+		ld	a,VID_320X240 | VID_16C
+	ELSE
+	IF _RESOLUTION = 360
+		ld	a,VID_360X288 | VID_16C
+	ELSE
+		ld	a,VID_256X192 | VID_16C
+	ENDIF
+	ENDIF
+
+	ld	bc,VCONFIG
+	out	(c),a
+
+	ld	a,GFX_PG
+	ld	b,high VPAGE
+	out	(c),a
+	ld	b,high PAGE3
+	out	(c),a
+	ld	hl,0
+	ld	(#C000),hl
+
+	ld	a,SPR_PG
+	ld	b,high SGPAGE
+	out	(c),a
+
+	xor	a
+	ld	b,high BORDER
+	out	(c),a
+
+	ld	hl,dma_clear_gfx
+	call	set_ports
+
+	ld	hl,dma_pal
+	call	set_ports
+
+	ld	hl,gfxinit
+	call	set_ports
+
+	ld	hl,sin_scrollY
+	ld	bc,SCROLL_AMPL_Y
+	call	SineGen
+	ld	hl,sin_scrollX
+	ld	bc,SCROLL_AMPL_X
+	call	SineGen
+
+	ld	hl,MUSIC
+	call	PT3PLAYER.INIT
+
+	call	set_im2
+
+	ei
+loop	halt
+	call	INDICATOR.draw
+	call	scroll
+	ld	hl,dma_scroll
+	call	set_ports
+	jp	loop
+
+;--------------------------------------------------------------
+set_im2:di
+	ld	a,#BE
+	ld	i,a
+	im	2
+	ld	hl,ISR
+	ld	(#BEFF),hl
+	ret
+
+ISR:	push	af,bc,de,hl
+	exx
+	exa
+	push	af,bc,de,hl
+	push	ix,iy
+	call	PT3PLAYER.PLAY
+	pop	iy,ix
+	pop	hl,de,bc,af
+	exa
+	exx
+	pop	hl,de,bc,af
+	ei
+	ret
+;--------------------------------------------------------------
+scroll_pal
+	DB	0
+scroll_speed
+	DB	SCROLL_SPEED
+scroll_speed_set
+	DB	SCROLL_SPEED
+scroll_speed_cnt
+	DB	0
+scroll_cnt
+	DB	SCROLL_SPEED
+scroll_cntX
+	DB	SCROLL_CNTX_DS
+scroll_cntXX
+	DB	SCROLL_CNTXX_DS
+scroll_xoffs
+	DW	SCROLL_SPEED
+text_addr
+	DW	text
+
+scroll:	ld	a,(scroll_speed)
+	ld	b,a
+	ld	a,(scroll_cnt)
+	sub	b
+	jr	nc,.skip
+;store remainder
+	push	af
+
+	ld	hl,(text_addr)
+.next	ld	a,(hl)
+	or	a
+	jr	nz,$+2+3
+	ld	hl,text
+	ld	a,(hl)
+	inc	hl
+	sub	#90
+	jr	c,1F
+	ld	(scroll_pal),a
+	jr	.next
+1	add	a,#10
+	jr	nc,2F
+	ld	(scroll_speed_set),a
+	jr	.next
+2	add	a,#60
+	ld	(text_addr),hl
+
+	ld	e,a
+
+;calc tile number
+	ld	c,a
+	and	#0F
+	add	a,a
+	add	a,a
+	ld	l,a
+	ld	a,c
+	rrca
+	rrca
+	rrca
+	rrca
+	and	#3
+	ld	h,a
+
+	ld	a,(scroll_pal)
+	rlca
+	rlca
+	rlca
+	rlca
+	and	#F0
+	or	h
+
+;set tile number
+	ld	ix,scroll_sprites+(SCROLL_SYMBOLS*6)
+	ld	(ix+4),l
+	ld	(ix+5),a
+
+	ld	a,e
+	cp	#0F
+	ld	d,3
+	jr	nz,$+2+2
+	ld	d,7
+	ld	a,d
+	call	set_sprite_size
+
+;scroll sprite descriptors
+	ld	hl,scroll_sprites+6
+	ld	de,scroll_sprites
+	ld	bc,(SCROLL_SYMBOLS+1)*6
+	ldir
+
+	ld	a,(scroll_cntX)
+	add	a,SCROLL_ADD1
+	ld	(scroll_cntX),a
+
+	ld	a,(scroll_cntXX)
+	add	a,SCROLL_ADDX1
+	ld	(scroll_cntXX),a
+
+;restore remainder
+	pop	af
+	add	a,32
+.skip	ld	(scroll_cnt),a
+	sub	64
+	ld	(scroll_xoffs),a
+	ld	a,0
+	sbc	a,a
+	ld	(scroll_xoffs+1),a
+
+;change speed
+	ld	hl,scroll_speed_cnt
+	dec	(hl)
+	jp	p,.skipspeed
+	ld	(hl),1
+	dec	hl
+	ld	a,(hl)
+	dec	hl
+	cp	(hl)
+	jr	z,.skipspeed
+	ld	c,-1
+	jr	c,$+2+2
+	ld	c,1
+	ld	a,(hl)
+	add	a,c
+	ld	(hl),a
+.skipspeed
+
+	exx
+	ld	h,high sin_scrollY
+	ld	a,(scroll_cntX)
+	add	a,SCROLL_ADD0
+	ld	(scroll_cntX),a
+	ld	l,a
+
+	ld	hy,high sin_scrollX
+	ld	a,(scroll_cntXX)
+	add	a,SCROLL_ADDX0
+	ld	(scroll_cntXX),a
+	ld	ly,a
+
+	ld	bc,(scroll_xoffs)
+	exx
+
+	ld	ix,scroll_sprites
+
+;create empty sprite descriptor
+	ld	de,0
+	ld	bc,0
+	call	set_sprite_coord
+	set	6,(ix+1)	;next layer
+	res	5,(ix+1)	;off
+
+	ld	de,6
+	add	ix,de
+
+	ld	b,SCROLL_SYMBOLS
+.loop	exx
+	ld	a,l
+	add	a,SCROLL_ADD1
+	ld	l,a
+	ld	a,(hl)	;y
+	add	a,(iy)
+	ld	e,a
+	ld	d,0
+
+	ld	a,ly
+	add	a,SCROLL_ADDX1
+	ld	ly,a
+
+;\for Ysize 64
+	push	hl
+	ld	hl,SCROLL_YOFFSET
+	ld	a,(ix+1)
+	and	#0E
+	cp	#0E
+	jr	nz,$+2+3
+	ld	hl,SCROLL_YOFFSET-32
+	add	hl,de
+	ex	de,hl
+	pop	hl
+;/
+	push	bc
+	ld	a,(iy)
+	add	a,c
+	ld	c,a
+	ld	a,b
+	adc	a,0
+	ld	b,a	;x
+	call	set_sprite_coord
+	pop	bc
+	ld	a,c
+	add	a,32
+	ld	c,a
+	ld	a,b
+	adc	a,0
+	ld	b,a	;x
+
+	exx
+	add	ix,de
+	djnz	.loop
+	ret
+
+;BC - Xcoord
+;DE - Ycoord
+set_sprite_coord:
+	ld	(ix+0),e	;Y
+	ld	a,d
+	and	1
+	or	(1<<5)
+	or	(ix+1)
+	ld	(ix+1),a
+	ld	(ix+2),c	;X
+	ld	a,b
+	and	1
+	or	(3<<1)
+	ld	(ix+3),a
+	ret
+
+;A - Ysize
+set_sprite_size:
+	rlca
+	ld	c,a
+	ld	a,(ix+1)
+	and	#F1
+	or	c
+	ld	(ix+1),a
+	ret
+;--------------------------------------------------------------
+	MODULE	INDICATOR
+draw:	ld	a,SPR_PG
+	ld	bc,PAGE3
+	out	(c),a
+
+	ld	hl,#C000+(31*256)
+	ld	de,#C000+(16*3)+(31*256)+0
+	ld	a,32
+	call	copy
+	ld	hl,#C000+(31*256)
+	ld	de,#C000+(16*3)+(31*256)+5
+	ld	a,32
+	call	copy
+	ld	hl,#C000+(31*256)
+	ld	de,#C000+(16*3)+(31*256)+10
+	ld	a,32
+	call	copy
+
+	ld	a,8
+	call	AY.getreg
+	ld	de,#C000+(16*3)+(31*256)+0
+	call	column
+
+	ld	a,9
+	call	AY.getreg
+	ld	de,#C000+(16*3)+(31*256)+5
+	call	column
+
+	ld	a,10
+	call	AY.getreg
+	ld	de,#C000+(16*3)+(31*256)+10
+
+column:	ld	hl,#C000+(16*4)-256
+	bit	4,a
+	jr	z,$+2+3+2
+	ld	hl,#C005+(16*4)-256
+	ld	a,#0F
+	and	#0F
+	add	a,a
+	ret	z
+	ld	b,a
+	add	a,h
+	ld	h,a
+	ld	a,b
+copy:	push	hl,de
+	ldi:ldi:ldi:ldi
+	pop	de,hl
+	dec	h
+	dec	d
+	dec	a
+	jp	nz,copy
+	ret
+	ENDMODULE
+;--------------------------------------------------------------
+	MODULE	AY
+;A - reg
+getreg:	ld	bc,#FFFD
+	out	(c),a
+	in	a,(c)
+	ret
+	ENDMODULE
+;--------------------------------------------------------------
+;HL - addr
+;BC - ampl
+SineGen:
+	ld	de,0
+.loop	ld	a,e
+	push	bc,de,hl
+	call	sinX
+	ld	a,e
+	pop	hl,de,bc
+	ld	(hl),a
+	inc	hl
+	inc	e
+	jr	nz,.loop
+	ret
+
+;A - X
+;BC - R
+sinX:	ld	l,a
+	ld	h,0
+	add	hl,hl
+	ld	de,SINETBL
+	add	hl,de
+	ld	e,(hl)
+	inc	hl
+	ld	d,(hl)
+	ld	hl,32767
+	add	hl,de
+	ex	de,hl
+;	call	mul16
+;	ret
+
+;---------------
+;DEHL = DE * BC
+;---------------
+mul16:	ld	hl,0
+	sla	e
+	rl	d
+	jr	nc,1F
+	ld	h,b
+	ld	l,c
+1	ld	a,15
+.loop	add	hl,hl
+	rl	e
+	rl	d
+	jr	nc,2F
+	add	hl,bc
+	jr	nc,2F
+	inc	de
+2	dec	a
+	jr	nz,.loop
+	ret
+;--------------------------------------------------------------
+set_ports:
+	ld	c,low VCONFIG
+.loop	ld	b,(hl)
+	inc	hl
+	inc	b
+	jr	z,dma_stats
+	outi
+	jr	.loop
+
+dma_stats:
+	ld	b,high DMASTATUS
+.wait	in	a,(c)
+	and	#80
+	jr	nz,.wait
+	ret
+
+dma_clear_gfx
+	DB	high DMASADDRL, 0
+	DB	high DMASADDRH, 0
+	DB	high DMASADDRX, GFX_PG
+	DB	high DMADADDRL, 0
+	DB	high DMADADDRH, 0
+	DB	high DMADADDRX, GFX_PG
+	DB	high DMANUM, #FF
+	DB	high DMALEN, #FF
+	DB	high DMACTR, DMA_FILL
+	DB	#FF
+
+dma_pal
+	DB	high DMASADDRL, low palette
+	DB	high DMASADDRH, high palette
+	DB	high DMASADDRX, 2
+	DB	high DMADADDRL, 0
+	DB	high DMADADDRH, 0
+	DB	high DMADADDRX, 0
+	DB	high DMANUM, #FF
+	DB	high DMALEN, 0
+	DB	high DMACTR, DMA_RAM_CRAM
+	DB	#FF
+
+dma_scroll
+	DB	high DMASADDRL, low scroll_sprites
+	DB	high DMASADDRH, high scroll_sprites
+	DB	high DMASADDRX, 2
+	DB	high DMADADDRL, 0
+	DB	high DMADADDRH, 0
+	DB	high DMADADDRX, 2
+	DB	high DMANUM, (SCROLL_SYMBOLS+1)*3
+	DB	high DMALEN, 0
+	DB 	high DMACTR, DMA_RAM_SFILE
+	DB	#FF
+
+gfxinit
+	;DB	high TSCONFIG,TSU_T0ZEN | TSU_T0EN | TSU_SEN
+	DB	high TSCONFIG, TSU_SEN
+	DB	high SGPAGE, SPR_PG
+	DB	high TMPAGE, TILE_PG
+	DB	high T0GPAGE,TILE00_SPRPG
+	DB	high PALSEL,0
+	DB	#FF
+;--------------------------------------------------------------
+	ALIGN	2
+scroll_sprites
+	DS	(SCROLL_SYMBOLS+2)*6
+;--------------------------------------------------------------
+;#80-#8F - speed
+;#90-#9F - palette
+;#2F - Bruno (palette 6)
+;"#" - indicator
+
+text	DB	#92,#88,"#",#90,"H",#81,"ELL",#88,"O",#81
+	DB	#91
+	DB	" DU"
+	DB	#88,"DES!",#81,#93,"#"
+	DB	#96,#2F," ",#90		;set palette 6 and set "Bruno"
+	DB	#8F
+	DB	"    STRETCH SCROLL",#81,#92,"@",#90
+	DB	#84," CODE BY ", #93, "DR.MAX ",#81,"  ",#88
+	DB	#92
+	DB	"MUSIC BY "
+	DB	#93,"#",#92,"NIK-O",#93,"#",#92,#81
+	DB	"   ",#88
+	DB	"   N0GRITZ ",#81,"  ",#8F
+	DB	"T0    ",#81
+	DB	"  ",#88
+	DB	"N0SCENE   ",#81,"  ", #84
+	DB	"NYUK, GIVE TRD!",#81,"  ",#88,#91
+	DB	"    !GIVE!",#81,"    ",#88
+	DB	"   :-)    "
+	DB	#81,"       "
+	DB	#93,"########"
+	DB	0
+;--------------------------------------------------------------
+	ALIGN	2
+palette	INCBIN	"res/font_32x32.tga.pal"
+
+SINETBL	INCLUDE "include/sinetbl.a80"
+
+	INCLUDE	"include/pt3.a80"
+
+MUSIC	INCBIN	"sfx/nq-ottifants-intro.pt3"
+
+end
+;--------------------------------------------------------------
+	DISPLAY "Text:", text
+	DISPLAY "End:", end
+;--------------------------------------------------------------
+	SAVESNA "sinescroll.sna", start
+	SAVEBIN	"sinescroll.bin", start, end-start
+;--------------------------------------------------------------
